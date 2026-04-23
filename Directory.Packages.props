@@ -29,6 +29,7 @@
     <PackageVersion Include="Asp.Versioning.OpenApi" Version="$(ApiVersioningVersion)" />
     <!-- Version together with ASP.NET -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="$(DotnetPackagesVersion)" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.Google" Version="$(DotnetPackagesVersion)" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="$(DotnetPackagesVersion)" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.QuickGrid" Version="$(DotnetPackagesVersion)" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.Web" Version="$(DotnetPackagesVersion)" />

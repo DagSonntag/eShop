@@ -15,6 +15,14 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>()
         .AddEntityFrameworkStores<ApplicationDbContext>()
         .AddDefaultTokenProviders();
 
+builder.Services.AddAuthentication()
+    .AddGoogle("Google", options =>
+    {
+        options.SignInScheme = IdentityServerConstants.ExternalCookieAuthenticationScheme;
+        options.ClientId = builder.Configuration["Authentication:Google:ClientId"] ?? "placeholder-client-id";
+        options.ClientSecret = builder.Configuration["Authentication:Google:ClientSecret"] ?? "placeholder-client-secret";
+    });
+
 builder.Services.AddIdentityServer(options =>
 {
     //options.IssuerUri = "null";

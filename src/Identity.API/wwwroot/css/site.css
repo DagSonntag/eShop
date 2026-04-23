@@ -1122,6 +1122,40 @@ form .col-md-4 {
     }
 }
 
+/* External login buttons */
+.btn-external {
+    border-radius: 0;
+    display: flex;
+    padding: 12px 24px;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    align-self: stretch;
+    width: 100%;
+    color: #FFF;
+    font-family: 'Plus Jakarta Sans';
+    font-weight: 600;
+    text-decoration: none;
+    border: 1px solid #000;
+    background: #000;
+}
+
+.btn-external:hover {
+    background: #333;
+    color: #FFF;
+    text-decoration: none;
+}
+
+.btn-external.google {
+    background: #4285F4;
+    border-color: #4285F4;
+}
+
+.btn-external.google:hover {
+    background: #3367D6;
+    border-color: #3367D6;
+}
+
 @media screen and (max-width: 415px) {
     .account-login-container {
         margin-left: -50px;

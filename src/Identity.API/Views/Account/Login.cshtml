@@ -42,6 +42,29 @@
                 </div>
                 <div class="col"></div>
             }
+
+            @if (Model.VisibleExternalProviders.Any())
+            {
+                <div class="col-sm-6">
+                    <div class="login-container">
+                        <h2>External Login</h2>
+                        <ul class="list-unstyled">
+                            @foreach (var provider in Model.VisibleExternalProviders)
+                            {
+                                <li class="mb-2">
+                                    <a class="btn btn-external @provider.AuthenticationScheme.ToLowerInvariant()"
+                                       asp-controller="External"
+                                       asp-action="Challenge"
+                                       asp-route-scheme="@provider.AuthenticationScheme"
+                                       asp-route-returnUrl="@Model.ReturnUrl">
+                                        Sign in with @provider.DisplayName
+                                    </a>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                </div>
+            }
         </div>
     </div>
 </div>
