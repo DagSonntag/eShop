@@ -68,10 +68,10 @@
                     },
                     //Allow requesting refresh tokens for long lived API access
                     AllowOfflineAccess = true,
-                    AllowAccessTokensViaBrowser = true,
-                    AlwaysIncludeUserClaimsInIdToken = true,
-                    AccessTokenLifetime = 60*60*2, // 2 hours
-                    IdentityTokenLifetime= 60*60*2 // 2 hours
+                    AllowAccessTokensViaBrowser = false,
+                    AlwaysIncludeUserClaimsInIdToken = false,
+                    AccessTokenLifetime = 60*15,   // 15 minutes
+                    IdentityTokenLifetime = 60*60  // 1 hour
                 },
                 new Client
                 {
@@ -86,8 +86,8 @@
                     AllowAccessTokensViaBrowser = false,
                     RequireConsent = false,
                     AllowOfflineAccess = true,
-                    AlwaysIncludeUserClaimsInIdToken = true,
-                    RequirePkce = false,
+                    AlwaysIncludeUserClaimsInIdToken = false,
+                    RequirePkce = true,
                     RedirectUris = new List<string>
                     {
                         $"{configuration["WebAppClient"]}/signin-oidc"
@@ -106,8 +106,8 @@
                         "webshoppingagg",
                         "webhooks"
                     },
-                    AccessTokenLifetime = 60*60*2, // 2 hours
-                    IdentityTokenLifetime= 60*60*2 // 2 hours
+                    AccessTokenLifetime = 60*15,   // 15 minutes
+                    IdentityTokenLifetime = 60*60  // 1 hour
                 },
                 new Client
                 {
@@ -122,7 +122,7 @@
                     AllowAccessTokensViaBrowser = false,
                     RequireConsent = false,
                     AllowOfflineAccess = true,
-                    AlwaysIncludeUserClaimsInIdToken = true,
+                    AlwaysIncludeUserClaimsInIdToken = false,
                     RedirectUris = new List<string>
                     {
                         $"{configuration["WebhooksWebClient"]}/signin-oidc"
@@ -138,8 +138,8 @@
                         IdentityServerConstants.StandardScopes.OfflineAccess,
                         "webhooks"
                     },
-                    AccessTokenLifetime = 60*60*2, // 2 hours
-                    IdentityTokenLifetime= 60*60*2 // 2 hours
+                    AccessTokenLifetime = 60*15,   // 15 minutes
+                    IdentityTokenLifetime = 60*60  // 1 hour
                 },
                 new Client
                 {
