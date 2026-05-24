@@ -89,6 +89,13 @@ public static class CatalogApi
             .WithDescription("Get a list of the brands of catalog items")
             .WithTags("Brands");
 
+        // Route for retrieving aggregate catalog statistics.
+        api.MapGet("/statistics", GetCatalogStatistics)
+            .WithName("GetCatalogStatistics")
+            .WithSummary("Get catalog statistics")
+            .WithDescription("Get aggregate statistics about the catalog (number of products, brands, types, stock and price information).")
+            .WithTags("Statistics");
+
         // Routes for modifying catalog items.
         v1.MapPut("/items", UpdateItemV1)
             .WithName("UpdateItem")
@@ -305,6 +312,41 @@ public static class CatalogApi
         [Description("The brand of items to return")] int? brandId)
     {
         return await GetAllItems(paginationRequest, services, null, null, brandId);
+    }
+
+    public static async Task<Ok<CatalogStatistics>> GetCatalogStatistics(CatalogContext context)
+    {
+        var totalItems = await context.CatalogItems.LongCountAsync();
+        var totalBrands = await context.CatalogBrands.LongCountAsync();
+        var totalTypes = await context.CatalogTypes.LongCountAsync();
+        var itemsOutOfStock = await context.CatalogItems.LongCountAsync(i => i.AvailableStock == 0);
+        var itemsOnReorder = await context.CatalogItems.LongCountAsync(i => i.OnReorder);
+
+        var priceStats = totalItems == 0
+            ? new { Average = 0m, Min = 0m, Max = 0m, Stock = 0L }
+            : await context.CatalogItems
+                .GroupBy(_ => 1)
+                .Select(g => new
+                {
+                    Average = g.Average(i => i.Price),
+                    Min = g.Min(i => i.Price),
+                    Max = g.Max(i => i.Price),
+                    Stock = g.Sum(i => (long)i.AvailableStock)
+                })
+                .SingleAsync();
+
+        return TypedResults.Ok(new CatalogStatistics
+        {
+            TotalItems = totalItems,
+            TotalBrands = totalBrands,
+            TotalTypes = totalTypes,
+            ItemsOutOfStock = itemsOutOfStock,
+            ItemsOnReorder = itemsOnReorder,
+            TotalAvailableStock = priceStats.Stock,
+            AveragePrice = priceStats.Average,
+            MinPrice = priceStats.Min,
+            MaxPrice = priceStats.Max
+        });
     }
 
     public static async Task<Results<Created, BadRequest<ProblemDetails>, NotFound<ProblemDetails>>> UpdateItemV1(
