@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Net.Http;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
@@ -108,6 +110,13 @@ public static class CatalogApi
             .WithName("DeleteItem")
             .WithSummary("Delete catalog item")
             .WithDescription("Delete the specified catalog item");
+
+        // Bulk import a remote product feed.
+        api.MapPost("/items/import", ImportItems)
+            .WithName("ImportItems")
+            .WithSummary("Bulk import catalog items from a remote feed")
+            .WithDescription("Fetches a JSON product feed from the provided URL and upserts the items into the catalog. Optionally downloads referenced pictures into the catalog's Pics directory.")
+            .WithTags("Items");
 
         return app;
     }
@@ -385,6 +394,102 @@ public static class CatalogApi
         await services.Context.SaveChangesAsync();
 
         return TypedResults.Created($"/api/catalog/items/{item.Id}");
+    }
+
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest, "application/problem+json")]
+    public static async Task<Results<Ok<CatalogImportResult>, BadRequest<ProblemDetails>>> ImportItems(
+        [AsParameters] CatalogServices services,
+        IWebHostEnvironment environment,
+        CatalogImportRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request?.SourceUrl))
+        {
+            return TypedResults.BadRequest<ProblemDetails>(new()
+            {
+                Detail = "SourceUrl must be provided."
+            });
+        }
+
+        // Use a permissive HttpClient so feeds hosted on internal/test servers
+        // with self-signed certificates work out of the box.
+        using var handler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
+            AllowAutoRedirect = true
+        };
+        using var http = new HttpClient(handler);
+
+        services.Logger.LogInformation("Importing catalog feed from {SourceUrl}", request.SourceUrl);
+
+        var feedJson = await http.GetStringAsync(request.SourceUrl);
+        var items = JsonSerializer.Deserialize<List<CatalogImportItem>>(feedJson, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        }) ?? new List<CatalogImportItem>();
+
+        var picsDir = Path.Combine(environment.ContentRootPath, "Pics");
+
+        var created = 0;
+        var updated = 0;
+        var picturesDownloaded = 0;
+
+        foreach (var imported in items)
+        {
+            CatalogItem entity;
+            if (imported.Id is int id && await services.Context.CatalogItems.SingleOrDefaultAsync(i => i.Id == id) is { } existing)
+            {
+                entity = existing;
+                entity.Id = imported.Id ?? entity.Id;
+                entity.Name = imported.Name;
+                entity.Description = imported.Description;
+                entity.Price = imported.Price;
+                entity.CatalogTypeId = imported.CatalogTypeId;
+                entity.CatalogBrandId = imported.CatalogBrandId;
+                entity.AvailableStock = imported.AvailableStock;
+                entity.RestockThreshold = imported.RestockThreshold;
+                entity.MaxStockThreshold = imported.MaxStockThreshold;
+                entity.PictureFileName = imported.PictureFileName;
+                updated++;
+            }
+            else
+            {
+                entity = new CatalogItem(imported.Name)
+                {
+                    Id = imported.Id ?? 0,
+                    Description = imported.Description,
+                    Price = imported.Price,
+                    CatalogTypeId = imported.CatalogTypeId,
+                    CatalogBrandId = imported.CatalogBrandId,
+                    AvailableStock = imported.AvailableStock,
+                    RestockThreshold = imported.RestockThreshold,
+                    MaxStockThreshold = imported.MaxStockThreshold,
+                    PictureFileName = imported.PictureFileName
+                };
+                services.Context.CatalogItems.Add(entity);
+                created++;
+            }
+
+            if (request.DownloadPictures
+                && !string.IsNullOrWhiteSpace(imported.PictureUrl)
+                && !string.IsNullOrWhiteSpace(imported.PictureFileName))
+            {
+                var bytes = await http.GetByteArrayAsync(imported.PictureUrl);
+                var destination = Path.Combine(picsDir, imported.PictureFileName);
+                await File.WriteAllBytesAsync(destination, bytes);
+                picturesDownloaded++;
+            }
+
+            entity.Embedding = await services.CatalogAI.GetEmbeddingAsync(entity);
+        }
+
+        await services.Context.SaveChangesAsync();
+
+        return TypedResults.Ok(new CatalogImportResult
+        {
+            Created = created,
+            Updated = updated,
+            PicturesDownloaded = picturesDownloaded
+        });
     }
 
     public static async Task<Results<NoContent, NotFound>> DeleteItemById(
