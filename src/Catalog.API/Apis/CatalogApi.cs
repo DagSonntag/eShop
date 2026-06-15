@@ -91,7 +91,13 @@ public static class CatalogApi
 
         // Route for retrieving aggregate catalog statistics.
         // Route for retrieving aggregate catalog statistics.
+        // Route for retrieving aggregate catalog statistics.
         api.MapGet("/statistics", GetCatalogStatistics)
+            .WithName("GetCatalogStatistics")
+            .WithSummary("Get catalog statistics")
+            .WithDescription("Get aggregate statistics about the catalog (number of products, brands, types, stock and price information).")
+            .WithTags("Statistics")
+            .RequireRateLimiting("statistics");
             .WithName("GetCatalogStatistics")
             .WithSummary("Get catalog statistics")
             .WithDescription("Get aggregate statistics about the catalog (number of products, brands, types, stock and price information).")
