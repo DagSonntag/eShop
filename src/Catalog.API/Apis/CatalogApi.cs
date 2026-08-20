@@ -473,8 +473,22 @@ public static class CatalogApi
                 && !string.IsNullOrWhiteSpace(imported.PictureUrl)
                 && !string.IsNullOrWhiteSpace(imported.PictureFileName))
             {
+                var fileName = imported.PictureFileName!;
+                var fullPicsDir = Path.GetFullPath(picsDir);
+                var destination = Path.GetFullPath(Path.Combine(fullPicsDir, fileName));
+
+                // Reject traversal, absolute paths, and any sub-directory component
+                // so the write cannot escape the Pics directory.
+                if (Path.GetFileName(fileName) != fileName
+                    || !destination.StartsWith(fullPicsDir + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                {
+                    return TypedResults.BadRequest<ProblemDetails>(new()
+                    {
+                        Detail = "One or more picture file names are invalid."
+                    });
+                }
+
                 var bytes = await http.GetByteArrayAsync(imported.PictureUrl);
-                var destination = Path.Combine(picsDir, imported.PictureFileName);
                 await File.WriteAllBytesAsync(destination, bytes);
                 picturesDownloaded++;
             }
