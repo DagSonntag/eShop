@@ -2,6 +2,7 @@
 
 builder.AddServiceDefaults();
 builder.AddApplicationServices();
+builder.AddDefaultAuthentication();
 builder.Services.AddProblemDetails();
 
 var withApiVersioning = builder.Services.AddApiVersioning(options =>

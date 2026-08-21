@@ -116,7 +116,8 @@ public static class CatalogApi
             .WithName("ImportItems")
             .WithSummary("Bulk import catalog items from a remote feed")
             .WithDescription("Fetches a JSON product feed from the provided URL and upserts the items into the catalog. Optionally downloads referenced pictures into the catalog's Pics directory.")
-            .WithTags("Items");
+            .WithTags("Items")
+            .RequireAuthorization();
 
         return app;
     }
