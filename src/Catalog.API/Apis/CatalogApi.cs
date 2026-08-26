@@ -411,11 +411,12 @@ public static class CatalogApi
             });
         }
 
-        // Use a permissive HttpClient so feeds hosted on internal/test servers
-        // with self-signed certificates work out of the box.
+        // Fetch feeds/pictures with default TLS certificate validation enabled
+        // (OS trust store, hostname, expiry, and revocation checks). To onboard a
+        // feed served over self-signed TLS, add its CA to the host trust store
+        // instead of disabling validation for all targets.
         using var handler = new HttpClientHandler
         {
-            ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
             AllowAutoRedirect = true
         };
         using var http = new HttpClient(handler);
@@ -429,6 +430,7 @@ public static class CatalogApi
         }) ?? new List<CatalogImportItem>();
 
         var picsDir = Path.Combine(environment.ContentRootPath, "Pics");
+        var fullPicsDir = Path.GetFullPath(picsDir);
 
         var created = 0;
         var updated = 0;
@@ -436,6 +438,20 @@ public static class CatalogApi
 
         foreach (var imported in items)
         {
+            // The feed-supplied picture file name is persisted below and later served
+            // from disk by GetItemPictureById, so validate it here — regardless of
+            // DownloadPictures — to block path traversal / arbitrary-file reads.
+            if (!string.IsNullOrWhiteSpace(imported.PictureFileName)
+                && (Path.GetFileName(imported.PictureFileName) != imported.PictureFileName
+                    || !Path.GetFullPath(Path.Combine(fullPicsDir, imported.PictureFileName))
+                            .StartsWith(fullPicsDir + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
+            {
+                return TypedResults.BadRequest<ProblemDetails>(new()
+                {
+                    Detail = "One or more picture file names are invalid."
+                });
+            }
+
             CatalogItem entity;
             if (imported.Id is int id && await services.Context.CatalogItems.SingleOrDefaultAsync(i => i.Id == id) is { } existing)
             {
@@ -474,21 +490,8 @@ public static class CatalogApi
                 && !string.IsNullOrWhiteSpace(imported.PictureUrl)
                 && !string.IsNullOrWhiteSpace(imported.PictureFileName))
             {
-                var fileName = imported.PictureFileName!;
-                var fullPicsDir = Path.GetFullPath(picsDir);
-                var destination = Path.GetFullPath(Path.Combine(fullPicsDir, fileName));
-
-                // Reject traversal, absolute paths, and any sub-directory component
-                // so the write cannot escape the Pics directory.
-                if (Path.GetFileName(fileName) != fileName
-                    || !destination.StartsWith(fullPicsDir + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-                {
-                    return TypedResults.BadRequest<ProblemDetails>(new()
-                    {
-                        Detail = "One or more picture file names are invalid."
-                    });
-                }
-
+                // File name already validated at the top of the loop.
+                var destination = Path.GetFullPath(Path.Combine(fullPicsDir, imported.PictureFileName!));
                 var bytes = await http.GetByteArrayAsync(imported.PictureUrl);
                 await File.WriteAllBytesAsync(destination, bytes);
                 picturesDownloaded++;
