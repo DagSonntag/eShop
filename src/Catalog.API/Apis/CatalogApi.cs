@@ -422,7 +422,12 @@ public static class CatalogApi
         };
         using var http = new HttpClient(handler);
 
-        services.Logger.LogInformation("Importing catalog feed from {SourceUrl}", request.SourceUrl);
+        // Strip any userinfo (user:pass@host) before logging so partner-feed
+        // credentials embedded in SourceUrl are never written to the log sink.
+        var safeSourceUrl = Uri.TryCreate(request.SourceUrl, UriKind.Absolute, out var parsedSourceUrl)
+            ? parsedSourceUrl.GetComponents(UriComponents.HttpRequestUrl, UriFormat.UriEscaped)
+            : "<invalid url>";
+        services.Logger.LogInformation("Importing catalog feed from {SourceUrl}", safeSourceUrl);
 
         var feedJson = await http.GetStringAsync(request.SourceUrl);
         var items = JsonSerializer.Deserialize<List<CatalogImportItem>>(feedJson, new JsonSerializerOptions
