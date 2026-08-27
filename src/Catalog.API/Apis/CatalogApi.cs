@@ -117,7 +117,8 @@ public static class CatalogApi
             .WithSummary("Bulk import catalog items from a remote feed")
             .WithDescription("Fetches a JSON product feed from the provided URL and upserts the items into the catalog. Optionally downloads referenced pictures into the catalog's Pics directory.")
             .WithTags("Items")
-            .RequireAuthorization();
+            .RequireAuthorization()
+            .RequireRateLimiting("CatalogImport");
 
         return app;
     }
@@ -449,6 +450,25 @@ public static class CatalogApi
                 return TypedResults.BadRequest<ProblemDetails>(new()
                 {
                     Detail = "One or more picture file names are invalid."
+                });
+            }
+
+            var validationErrors = new List<string>();
+            if (string.IsNullOrWhiteSpace(imported.Name))
+                validationErrors.Add("Name is required.");
+            else if (imported.Name.Length > 50)
+                validationErrors.Add("Name must be 50 characters or fewer.");
+            if (imported.Price < 0)
+                validationErrors.Add("Price must be non-negative.");
+            if (!await services.Context.CatalogTypes.AnyAsync(t => t.Id == imported.CatalogTypeId))
+                validationErrors.Add($"CatalogTypeId {imported.CatalogTypeId} does not exist.");
+            if (!await services.Context.CatalogBrands.AnyAsync(b => b.Id == imported.CatalogBrandId))
+                validationErrors.Add($"CatalogBrandId {imported.CatalogBrandId} does not exist.");
+            if (validationErrors.Count > 0)
+            {
+                return TypedResults.BadRequest<ProblemDetails>(new()
+                {
+                    Detail = string.Join(" ", validationErrors)
                 });
             }
 
