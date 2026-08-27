@@ -15,6 +15,10 @@ builder.AddDefaultOpenApi(withApiVersioning);
 
 var app = builder.Build();
 
+// Convert any unhandled exception into a generic ProblemDetails response (no stack
+// trace or internal detail) in all environments; full detail is logged server-side.
+app.UseExceptionHandler();
+
 app.MapDefaultEndpoints();
 
 app.UseStatusCodePages();
