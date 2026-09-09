@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
@@ -410,11 +411,11 @@ public static class CatalogApi
             });
         }
 
-        // Use a permissive HttpClient so feeds hosted on internal/test servers
-        // with self-signed certificates work out of the box.
+        // Enforce strict TLS certificate validation on all outbound requests;
+        // rely on the system trust store and enable revocation checking.
         using var handler = new HttpClientHandler
         {
-            ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
+            CheckCertificateRevocationList = true,
             AllowAutoRedirect = true
         };
         using var http = new HttpClient(handler);
@@ -473,7 +474,14 @@ public static class CatalogApi
                 && !string.IsNullOrWhiteSpace(imported.PictureUrl)
                 && !string.IsNullOrWhiteSpace(imported.PictureFileName))
             {
-                var destination = Path.Combine(picsDir, imported.PictureFileName);
+                if (!TryResolvePicturePath(picsDir, imported.PictureFileName, out var destination))
+                {
+                    return TypedResults.BadRequest<ProblemDetails>(new()
+                    {
+                        Detail = "PictureFileName is not a valid file name."
+                    });
+                }
+
                 await DownloadPictureWithLimitAsync(
                     http, imported.PictureUrl, destination, services.Options.Value.MaxPictureDownloadBytes);
                 picturesDownloaded++;
@@ -507,6 +515,10 @@ public static class CatalogApi
         }
 
         await using var source = await response.Content.ReadAsStreamAsync();
+        if (File.Exists(destination) && new FileInfo(destination).LinkTarget is not null)
+        {
+            throw new InvalidOperationException("Refusing to write through a symbolic link.");
+        }
         await using var file = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None);
         var buffer = new byte[81920];
         long total = 0;
@@ -522,6 +534,31 @@ public static class CatalogApi
             }
             await file.WriteAsync(buffer.AsMemory(0, read));
         }
+    }
+
+    private static readonly Regex SafePictureFileNameRegex =
+        new(@"^[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,8}$", RegexOptions.Compiled);
+
+    // Confines an imported picture to the Pics directory: the strict pattern
+    // rejects separators, "..", rooted/absolute paths, null bytes and other
+    // unsafe characters, and the canonical path is verified to stay under picsDir.
+    private static bool TryResolvePicturePath(string picsDir, string fileName, out string destination)
+    {
+        destination = string.Empty;
+        if (string.IsNullOrWhiteSpace(fileName) || !SafePictureFileNameRegex.IsMatch(fileName))
+        {
+            return false;
+        }
+
+        var root = Path.GetFullPath(picsDir);
+        var candidate = Path.GetFullPath(Path.Combine(root, fileName));
+        if (!candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        destination = candidate;
+        return true;
     }
 
     public static async Task<Results<NoContent, NotFound>> DeleteItemById(
