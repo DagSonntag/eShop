@@ -1,5 +1,8 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Net.Http;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
@@ -108,6 +111,13 @@ public static class CatalogApi
             .WithName("DeleteItem")
             .WithSummary("Delete catalog item")
             .WithDescription("Delete the specified catalog item");
+
+        // Bulk import a remote product feed.
+        api.MapPost("/items/import", ImportItems)
+            .WithName("ImportItems")
+            .WithSummary("Bulk import catalog items from a remote feed")
+            .WithDescription("Fetches a JSON product feed from the provided URL and upserts the items into the catalog. Optionally downloads referenced pictures into the catalog's Pics directory.")
+            .WithTags("Items");
 
         return app;
     }
@@ -385,6 +395,170 @@ public static class CatalogApi
         await services.Context.SaveChangesAsync();
 
         return TypedResults.Created($"/api/catalog/items/{item.Id}");
+    }
+
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest, "application/problem+json")]
+    public static async Task<Results<Ok<CatalogImportResult>, BadRequest<ProblemDetails>>> ImportItems(
+        [AsParameters] CatalogServices services,
+        IWebHostEnvironment environment,
+        CatalogImportRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request?.SourceUrl))
+        {
+            return TypedResults.BadRequest<ProblemDetails>(new()
+            {
+                Detail = "SourceUrl must be provided."
+            });
+        }
+
+        // Enforce strict TLS certificate validation on all outbound requests;
+        // rely on the system trust store and enable revocation checking.
+        using var handler = new HttpClientHandler
+        {
+            CheckCertificateRevocationList = true,
+            AllowAutoRedirect = true
+        };
+        using var http = new HttpClient(handler);
+
+        services.Logger.LogInformation("Importing catalog feed from {SourceUrl}", request.SourceUrl);
+
+        var feedJson = await http.GetStringAsync(request.SourceUrl);
+        var items = JsonSerializer.Deserialize<List<CatalogImportItem>>(feedJson, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        }) ?? new List<CatalogImportItem>();
+
+        var picsDir = Path.Combine(environment.ContentRootPath, "Pics");
+
+        var created = 0;
+        var updated = 0;
+        var picturesDownloaded = 0;
+
+        foreach (var imported in items)
+        {
+            CatalogItem entity;
+            if (imported.Id is int id && await services.Context.CatalogItems.SingleOrDefaultAsync(i => i.Id == id) is { } existing)
+            {
+                entity = existing;
+                entity.Id = imported.Id ?? entity.Id;
+                entity.Name = imported.Name;
+                entity.Description = imported.Description;
+                entity.Price = imported.Price;
+                entity.CatalogTypeId = imported.CatalogTypeId;
+                entity.CatalogBrandId = imported.CatalogBrandId;
+                entity.AvailableStock = imported.AvailableStock;
+                entity.RestockThreshold = imported.RestockThreshold;
+                entity.MaxStockThreshold = imported.MaxStockThreshold;
+                entity.PictureFileName = imported.PictureFileName;
+                updated++;
+            }
+            else
+            {
+                entity = new CatalogItem(imported.Name)
+                {
+                    Id = imported.Id ?? 0,
+                    Description = imported.Description,
+                    Price = imported.Price,
+                    CatalogTypeId = imported.CatalogTypeId,
+                    CatalogBrandId = imported.CatalogBrandId,
+                    AvailableStock = imported.AvailableStock,
+                    RestockThreshold = imported.RestockThreshold,
+                    MaxStockThreshold = imported.MaxStockThreshold,
+                    PictureFileName = imported.PictureFileName
+                };
+                services.Context.CatalogItems.Add(entity);
+                created++;
+            }
+
+            if (request.DownloadPictures
+                && !string.IsNullOrWhiteSpace(imported.PictureUrl)
+                && !string.IsNullOrWhiteSpace(imported.PictureFileName))
+            {
+                if (!TryResolvePicturePath(picsDir, imported.PictureFileName, out var destination))
+                {
+                    return TypedResults.BadRequest<ProblemDetails>(new()
+                    {
+                        Detail = "PictureFileName is not a valid file name."
+                    });
+                }
+
+                await DownloadPictureWithLimitAsync(
+                    http, imported.PictureUrl, destination, services.Options.Value.MaxPictureDownloadBytes);
+                picturesDownloaded++;
+            }
+
+            entity.Embedding = await services.CatalogAI.GetEmbeddingAsync(entity);
+        }
+
+        await services.Context.SaveChangesAsync();
+
+        return TypedResults.Ok(new CatalogImportResult
+        {
+            Created = created,
+            Updated = updated,
+            PicturesDownloaded = picturesDownloaded
+        });
+    }
+
+    // Streams a remote picture to disk while enforcing a hard byte cap so a
+    // malicious or oversized feed cannot exhaust memory or disk. Actual
+    // streamed bytes are counted (Content-Length is not trusted); a partial
+    // file is deleted if the cap is exceeded.
+    private static async Task DownloadPictureWithLimitAsync(HttpClient http, string url, string destination, long maxBytes)
+    {
+        using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+        response.EnsureSuccessStatusCode();
+
+        if (response.Content.Headers.ContentLength is long declared && declared > maxBytes)
+        {
+            throw new InvalidOperationException("Picture exceeds the maximum allowed size.");
+        }
+
+        await using var source = await response.Content.ReadAsStreamAsync();
+        if (File.Exists(destination) && new FileInfo(destination).LinkTarget is not null)
+        {
+            throw new InvalidOperationException("Refusing to write through a symbolic link.");
+        }
+        await using var file = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None);
+        var buffer = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = await source.ReadAsync(buffer)) > 0)
+        {
+            total += read;
+            if (total > maxBytes)
+            {
+                await file.DisposeAsync();
+                File.Delete(destination);
+                throw new InvalidOperationException("Picture exceeds the maximum allowed size.");
+            }
+            await file.WriteAsync(buffer.AsMemory(0, read));
+        }
+    }
+
+    private static readonly Regex SafePictureFileNameRegex =
+        new(@"^[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,8}$", RegexOptions.Compiled);
+
+    // Confines an imported picture to the Pics directory: the strict pattern
+    // rejects separators, "..", rooted/absolute paths, null bytes and other
+    // unsafe characters, and the canonical path is verified to stay under picsDir.
+    private static bool TryResolvePicturePath(string picsDir, string fileName, out string destination)
+    {
+        destination = string.Empty;
+        if (string.IsNullOrWhiteSpace(fileName) || !SafePictureFileNameRegex.IsMatch(fileName))
+        {
+            return false;
+        }
+
+        var root = Path.GetFullPath(picsDir);
+        var candidate = Path.GetFullPath(Path.Combine(root, fileName));
+        if (!candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        destination = candidate;
+        return true;
     }
 
     public static async Task<Results<NoContent, NotFound>> DeleteItemById(
