@@ -473,9 +473,9 @@ public static class CatalogApi
                 && !string.IsNullOrWhiteSpace(imported.PictureUrl)
                 && !string.IsNullOrWhiteSpace(imported.PictureFileName))
             {
-                var bytes = await http.GetByteArrayAsync(imported.PictureUrl);
                 var destination = Path.Combine(picsDir, imported.PictureFileName);
-                await File.WriteAllBytesAsync(destination, bytes);
+                await DownloadPictureWithLimitAsync(
+                    http, imported.PictureUrl, destination, services.Options.Value.MaxPictureDownloadBytes);
                 picturesDownloaded++;
             }
 
@@ -490,6 +490,38 @@ public static class CatalogApi
             Updated = updated,
             PicturesDownloaded = picturesDownloaded
         });
+    }
+
+    // Streams a remote picture to disk while enforcing a hard byte cap so a
+    // malicious or oversized feed cannot exhaust memory or disk. Actual
+    // streamed bytes are counted (Content-Length is not trusted); a partial
+    // file is deleted if the cap is exceeded.
+    private static async Task DownloadPictureWithLimitAsync(HttpClient http, string url, string destination, long maxBytes)
+    {
+        using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+        response.EnsureSuccessStatusCode();
+
+        if (response.Content.Headers.ContentLength is long declared && declared > maxBytes)
+        {
+            throw new InvalidOperationException("Picture exceeds the maximum allowed size.");
+        }
+
+        await using var source = await response.Content.ReadAsStreamAsync();
+        await using var file = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None);
+        var buffer = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = await source.ReadAsync(buffer)) > 0)
+        {
+            total += read;
+            if (total > maxBytes)
+            {
+                await file.DisposeAsync();
+                File.Delete(destination);
+                throw new InvalidOperationException("Picture exceeds the maximum allowed size.");
+            }
+            await file.WriteAsync(buffer.AsMemory(0, read));
+        }
     }
 
     public static async Task<Results<NoContent, NotFound>> DeleteItemById(
