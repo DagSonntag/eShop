@@ -484,6 +484,16 @@ public static class CatalogApi
 
                 await DownloadPictureWithLimitAsync(
                     http, imported.PictureUrl, destination, services.Options.Value.MaxPictureDownloadBytes);
+
+                if (!HasValidImageSignature(destination))
+                {
+                    File.Delete(destination);
+                    return TypedResults.BadRequest<ProblemDetails>(new()
+                    {
+                        Detail = "Downloaded file does not contain valid image data."
+                    });
+                }
+
                 picturesDownloaded++;
             }
 
@@ -508,6 +518,12 @@ public static class CatalogApi
     {
         using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
+
+        var contentType = response.Content.Headers.ContentType?.MediaType;
+        if (string.IsNullOrEmpty(contentType) || !AllowedImageContentTypes.Contains(contentType))
+        {
+            throw new InvalidOperationException("Picture has an unsupported or missing content type.");
+        }
 
         if (response.Content.Headers.ContentLength is long declared && declared > maxBytes)
         {
@@ -539,6 +555,25 @@ public static class CatalogApi
     private static readonly Regex SafePictureFileNameRegex =
         new(@"^[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,8}$", RegexOptions.Compiled);
 
+    private static readonly HashSet<string> AllowedImageContentTypes = new(
+        ["image/jpeg", "image/png", "image/gif", "image/webp"], StringComparer.OrdinalIgnoreCase);
+
+    private static readonly HashSet<string> AllowedImageExtensions = new(
+        [".jpg", ".jpeg", ".png", ".gif", ".webp"], StringComparer.OrdinalIgnoreCase);
+
+    private static bool HasValidImageSignature(string filePath)
+    {
+        Span<byte> h = stackalloc byte[8];
+        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.None);
+        int n = fs.Read(h);
+        if (n < 3) return false;
+        if (h[0] == 0xFF && h[1] == 0xD8 && h[2] == 0xFF) return true; // JPEG
+        if (n >= 4 && h[0] == 0x89 && h[1] == 0x50 && h[2] == 0x4E && h[3] == 0x47) return true; // PNG
+        if (h[0] == 0x47 && h[1] == 0x49 && h[2] == 0x46) return true; // GIF
+        if (n >= 4 && h[0] == 0x52 && h[1] == 0x49 && h[2] == 0x46 && h[3] == 0x46) return true; // WEBP (RIFF)
+        return false;
+    }
+
     // Confines an imported picture to the Pics directory: the strict pattern
     // rejects separators, "..", rooted/absolute paths, null bytes and other
     // unsafe characters, and the canonical path is verified to stay under picsDir.
@@ -546,6 +581,12 @@ public static class CatalogApi
     {
         destination = string.Empty;
         if (string.IsNullOrWhiteSpace(fileName) || !SafePictureFileNameRegex.IsMatch(fileName))
+        {
+            return false;
+        }
+
+        var ext = Path.GetExtension(fileName);
+        if (!AllowedImageExtensions.Contains(ext))
         {
             return false;
         }
