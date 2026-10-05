@@ -581,6 +581,60 @@
         }
       }
     },
+    "/api/catalog/items/import": {
+      "post": {
+        "tags": [
+          "Items"
+        ],
+        "summary": "Bulk import catalog items from a remote feed",
+        "description": "Fetches a JSON product feed from the provided URL and upserts the items into the catalog. Optionally downloads referenced pictures into the catalog's Pics directory.",
+        "operationId": "ImportItems",
+        "parameters": [
+          {
+            "name": "api-version",
+            "in": "query",
+            "description": "The API version, in the format 'major.minor'.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "2.0"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/catalog/items/withsemanticrelevance": {
       "get": {
         "tags": [
@@ -682,6 +736,49 @@
           },
           "brand": {
             "type": "string"
+          }
+        }
+      },
+      "CatalogImportRequest": {
+        "required": [
+          "sourceUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "sourceUrl": {
+            "type": "string"
+          },
+          "downloadPictures": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CatalogImportResult": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "updated": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "picturesDownloaded": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
           }
         }
       },
