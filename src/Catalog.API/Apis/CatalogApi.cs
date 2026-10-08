@@ -128,8 +128,8 @@ public static class CatalogApi
         [Description("The type of items to return")] int? type,
         [Description("The brand of items to return")] int? brand)
     {
-        var pageSize = paginationRequest.PageSize;
-        var pageIndex = paginationRequest.PageIndex;
+        var pageSize = Math.Clamp(paginationRequest.PageSize, 1, 100);
+        var pageIndex = Math.Max(paginationRequest.PageIndex, 0);
 
         var root = (IQueryable<CatalogItem>)services.Context.CatalogItems;
 
@@ -159,10 +159,18 @@ public static class CatalogApi
     }
 
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest, "application/problem+json")]
-    public static async Task<Ok<List<CatalogItem>>> GetItemsByIds(
+    public static async Task<Results<Ok<List<CatalogItem>>, BadRequest<ProblemDetails>>> GetItemsByIds(
         [AsParameters] CatalogServices services,
         [Description("List of ids for catalog items to return")] int[] ids)
     {
+        if (ids is null || ids.Length == 0 || ids.Length > 100)
+        {
+            return TypedResults.BadRequest<ProblemDetails>(new()
+            {
+                Detail = "Provide between 1 and 100 item IDs."
+            });
+        }
+
         var items = await services.Context.CatalogItems.Where(item => ids.Contains(item.Id)).ToListAsync();
         return TypedResults.Ok(items);
     }
@@ -202,6 +210,8 @@ public static class CatalogApi
     [ProducesResponseType<byte[]>(StatusCodes.Status200OK, "application/octet-stream",
         [ "image/png", "image/gif", "image/jpeg", "image/bmp", "image/tiff",
           "image/wmf", "image/jp2", "image/svg+xml", "image/webp" ])]
+    private const long MaxPictureFileBytes = 10 * 1024 * 1024; // 10 MB
+
     public static async Task<Results<PhysicalFileHttpResult,NotFound>> GetItemPictureById(
         CatalogContext context,
         IWebHostEnvironment environment,
@@ -215,6 +225,12 @@ public static class CatalogApi
         }
 
         var path = GetFullPath(environment.ContentRootPath, item.PictureFileName);
+
+        var fileInfo = new FileInfo(path);
+        if (!fileInfo.Exists || fileInfo.Length > MaxPictureFileBytes)
+        {
+            return TypedResults.NotFound();
+        }
 
         string imageFileExtension = Path.GetExtension(item.PictureFileName) ?? string.Empty;
         string mimetype = GetImageMimeTypeFromImageFileExtension(imageFileExtension);
@@ -239,8 +255,8 @@ public static class CatalogApi
         [AsParameters] CatalogServices services,
         [Description("The text string to use when search for related items in the catalog"), Required, MinLength(1)] string text)
     {
-        var pageSize = paginationRequest.PageSize;
-        var pageIndex = paginationRequest.PageIndex;
+        var pageSize = Math.Clamp(paginationRequest.PageSize, 1, 100);
+        var pageIndex = Math.Max(paginationRequest.PageIndex, 0);
 
         if (!services.CatalogAI.IsEnabled)
         {

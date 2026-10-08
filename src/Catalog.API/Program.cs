@@ -4,6 +4,11 @@ builder.AddServiceDefaults();
 builder.AddApplicationServices();
 builder.Services.AddProblemDetails();
 
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 1 * 1024 * 1024; // 1 MB
+});
+
 var withApiVersioning = builder.Services.AddApiVersioning(options =>
 {
     // Include "api-supported-versions" and "api-deprecated-versions" headers in all responses
