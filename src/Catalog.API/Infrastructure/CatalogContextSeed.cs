@@ -10,6 +10,9 @@ public partial class CatalogContextSeed(
     ICatalogAI catalogAI,
     ILogger<CatalogContextSeed> logger) : IDbSeeder<CatalogContext>
 {
+    private const long MaxSeedFileSizeBytes = 5 * 1024 * 1024; // 5 MB
+    private const int MaxSeedItemCount = 10_000;
+
     public async Task SeedAsync(CatalogContext context)
     {
         var useCustomizationData = settings.Value.UseCustomizationData;
@@ -23,8 +26,21 @@ public partial class CatalogContextSeed(
         if (!context.CatalogItems.Any())
         {
             var sourcePath = Path.Combine(contentRootPath, "Setup", "catalog.json");
+            var seedFileInfo = new FileInfo(sourcePath);
+            if (seedFileInfo.Length > MaxSeedFileSizeBytes)
+            {
+                logger.LogWarning("Catalog seed file exceeds maximum allowed size of {MaxSize} bytes. Skipping seed.", MaxSeedFileSizeBytes);
+                return;
+            }
+
             var sourceJson = File.ReadAllText(sourcePath);
             var sourceItems = JsonSerializer.Deserialize<CatalogSourceEntry[]>(sourceJson) ?? Array.Empty<CatalogSourceEntry>();
+
+            if (sourceItems.Length > MaxSeedItemCount)
+            {
+                logger.LogWarning("Catalog seed file contains {Count} items, exceeding the maximum of {Max}. Skipping seed.", sourceItems.Length, MaxSeedItemCount);
+                return;
+            }
 
             context.CatalogBrands.RemoveRange(context.CatalogBrands);
             await context.CatalogBrands.AddRangeAsync(sourceItems.Select(x => x.Brand).Distinct()

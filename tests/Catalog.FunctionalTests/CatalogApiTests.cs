@@ -398,6 +398,54 @@ public sealed class CatalogApiTests : IClassFixture<CatalogApiFixture>
     [Theory]
     [InlineData(1.0)]
     [InlineData(2.0)]
+    public async Task GetCatalogItemsClampsTooLargePageSize(double version)
+    {
+        var _httpClient = CreateHttpClient(new ApiVersion(version));
+
+        // Act - request an extremely large page size
+        var response = await _httpClient.GetAsync("/api/catalog/items?pageIndex=0&pageSize=10000", TestContext.Current.CancellationToken);
+
+        // Assert - request succeeds but page size is clamped to 100
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var result = JsonSerializer.Deserialize<PaginatedItems<CatalogItem>>(body, _jsonSerializerOptions);
+
+        Assert.Equal(100, result.PageSize);
+        Assert.True(result.Data.Count() <= 100);
+    }
+
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(2.0)]
+    public async Task GetItemsByIdsRejectsTooManyIds(double version)
+    {
+        var _httpClient = CreateHttpClient(new ApiVersion(version));
+
+        // Act - request with 101 IDs (over the limit of 100)
+        var queryString = string.Join("&", Enumerable.Range(1, 101).Select(i => $"ids={i}"));
+        var response = await _httpClient.GetAsync($"/api/catalog/items/by?{queryString}", TestContext.Current.CancellationToken);
+
+        // Assert - returns 400 Bad Request
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(2.0)]
+    public async Task GetItemsByIdsRejectsEmptyIds(double version)
+    {
+        var _httpClient = CreateHttpClient(new ApiVersion(version));
+
+        // Act - request with no IDs
+        var response = await _httpClient.GetAsync("/api/catalog/items/by", TestContext.Current.CancellationToken);
+
+        // Assert - returns 400 Bad Request
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(2.0)]
     public async Task DeleteCatalogItem(double version)
     {
         var _httpClient = CreateHttpClient(new ApiVersion(version));
