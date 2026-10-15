@@ -440,53 +440,62 @@ public static class CatalogApi
 
         var created = 0;
         var updated = 0;
+        var skipped = 0;
         var picturesDownloaded = 0;
+        var errors = new List<string>();
 
-        foreach (var imported in items)
+        for (var idx = 0; idx < items.Count; idx++)
         {
-            // The feed-supplied picture file name is persisted below and later served
-            // from disk by GetItemPictureById, so validate it here — regardless of
-            // DownloadPictures — to block path traversal / arbitrary-file reads.
+            var imported = items[idx];
+            var itemLabel = !string.IsNullOrWhiteSpace(imported.Name)
+                ? $"Item {idx} ('{imported.Name}')"
+                : $"Item {idx}";
+
+            // Per-item validation — collect errors and skip invalid items instead
+            // of aborting the entire batch.
+            var itemErrors = new List<string>();
+
+            // Picture file name: block path traversal / arbitrary-file reads.
             if (!string.IsNullOrWhiteSpace(imported.PictureFileName)
                 && (Path.GetFileName(imported.PictureFileName) != imported.PictureFileName
                     || !Path.GetFullPath(Path.Combine(fullPicsDir, imported.PictureFileName))
                             .StartsWith(fullPicsDir + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
             {
-                return TypedResults.BadRequest<ProblemDetails>(new()
-                {
-                    Detail = "One or more picture file names are invalid."
-                });
+                itemErrors.Add("Picture file name is invalid.");
             }
 
-            var validationErrors = new List<string>();
             if (string.IsNullOrWhiteSpace(imported.Name))
-                validationErrors.Add("Name is required.");
+                itemErrors.Add("Name is required.");
             else if (imported.Name.Length > 50)
-                validationErrors.Add("Name must be 50 characters or fewer.");
+                itemErrors.Add("Name must be 50 characters or fewer.");
             if (imported.Price < 0)
-                validationErrors.Add("Price must be non-negative.");
+                itemErrors.Add("Price must be non-negative.");
             if (!await services.Context.CatalogTypes.AnyAsync(t => t.Id == imported.CatalogTypeId))
-                validationErrors.Add($"CatalogTypeId {imported.CatalogTypeId} does not exist.");
+                itemErrors.Add($"CatalogTypeId {imported.CatalogTypeId} does not exist.");
             if (!await services.Context.CatalogBrands.AnyAsync(b => b.Id == imported.CatalogBrandId))
-                validationErrors.Add($"CatalogBrandId {imported.CatalogBrandId} does not exist.");
-            if (validationErrors.Count > 0)
+                itemErrors.Add($"CatalogBrandId {imported.CatalogBrandId} does not exist.");
+
+            if (itemErrors.Count > 0)
             {
-                return TypedResults.BadRequest<ProblemDetails>(new()
-                {
-                    Detail = string.Join(" ", validationErrors)
-                });
+                skipped++;
+                errors.Add($"{itemLabel}: {string.Join(" ", itemErrors)}");
+                continue;
             }
 
+            // Match existing items by natural key (Name + CatalogTypeId + CatalogBrandId)
+            // instead of a feed-supplied Id, so external feeds cannot overwrite arbitrary rows.
             CatalogItem entity;
-            if (imported.Id is int id && await services.Context.CatalogItems.SingleOrDefaultAsync(i => i.Id == id) is { } existing)
+            var existing = await services.Context.CatalogItems
+                .FirstOrDefaultAsync(i =>
+                    i.Name == imported.Name
+                    && i.CatalogTypeId == imported.CatalogTypeId
+                    && i.CatalogBrandId == imported.CatalogBrandId);
+
+            if (existing is not null)
             {
                 entity = existing;
-                entity.Id = imported.Id ?? entity.Id;
-                entity.Name = imported.Name;
                 entity.Description = imported.Description;
                 entity.Price = imported.Price;
-                entity.CatalogTypeId = imported.CatalogTypeId;
-                entity.CatalogBrandId = imported.CatalogBrandId;
                 entity.AvailableStock = imported.AvailableStock;
                 entity.RestockThreshold = imported.RestockThreshold;
                 entity.MaxStockThreshold = imported.MaxStockThreshold;
@@ -497,7 +506,6 @@ public static class CatalogApi
             {
                 entity = new CatalogItem(imported.Name)
                 {
-                    Id = imported.Id ?? 0,
                     Description = imported.Description,
                     Price = imported.Price,
                     CatalogTypeId = imported.CatalogTypeId,
@@ -531,7 +539,9 @@ public static class CatalogApi
         {
             Created = created,
             Updated = updated,
-            PicturesDownloaded = picturesDownloaded
+            Skipped = skipped,
+            PicturesDownloaded = picturesDownloaded,
+            Errors = errors
         });
     }
 
