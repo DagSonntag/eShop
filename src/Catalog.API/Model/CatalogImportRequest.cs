@@ -20,8 +20,6 @@ public class CatalogImportRequest
 
 public class CatalogImportItem
 {
-    public int? Id { get; set; }
-
     [Required]
     public string Name { get; set; } = default!;
 
@@ -56,5 +54,12 @@ public class CatalogImportResult
 
     public int Updated { get; init; }
 
+    public int Skipped { get; init; }
+
     public int PicturesDownloaded { get; init; }
+
+    /// <summary>
+    /// Per-item validation errors for items that were skipped.
+    /// </summary>
+    public List<string> Errors { get; init; } = new();
 }
