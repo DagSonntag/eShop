@@ -5,11 +5,15 @@
         // ApiResources define the apis in your system
         public static IEnumerable<ApiResource> GetApis()
         {
+            // Each ApiResource owns its scope so IdentityServer emits its
+            // name as the `aud` claim when that scope is requested. Without
+            // this linkage no audience is issued and JWT audience validation
+            // cannot bind a token to a specific API.
             return new List<ApiResource>
             {
-                new ApiResource("orders", "Orders Service"),
-                new ApiResource("basket", "Basket Service"),
-                new ApiResource("webhooks", "Webhooks registration Service"),
+                new ApiResource("orders", "Orders Service") { Scopes = { "orders" } },
+                new ApiResource("basket", "Basket Service") { Scopes = { "basket" } },
+                new ApiResource("webhooks", "Webhooks registration Service") { Scopes = { "webhooks" } },
             };
         }
 
