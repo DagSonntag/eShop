@@ -165,6 +165,7 @@ public class ExternalController : Controller
         // user's display name
         var name = claims.FirstOrDefault(x => x.Type == JwtClaimTypes.Name)?.Value ??
             claims.FirstOrDefault(x => x.Type == ClaimTypes.Name)?.Value;
+        name = SanitizeName(name);
         if (name != null)
         {
             filtered.Add(new Claim(JwtClaimTypes.Name, name));
@@ -177,21 +178,23 @@ public class ExternalController : Controller
                 claims.FirstOrDefault(x => x.Type == ClaimTypes.Surname)?.Value;
             if (first != null && last != null)
             {
-                filtered.Add(new Claim(JwtClaimTypes.Name, first + " " + last));
+                name = SanitizeName(first + " " + last);
             }
-            else if (first != null)
+            else
             {
-                filtered.Add(new Claim(JwtClaimTypes.Name, first));
+                name = SanitizeName(first ?? last);
             }
-            else if (last != null)
+
+            if (name != null)
             {
-                filtered.Add(new Claim(JwtClaimTypes.Name, last));
+                filtered.Add(new Claim(JwtClaimTypes.Name, name));
             }
         }
 
         // email
         var email = claims.FirstOrDefault(x => x.Type == JwtClaimTypes.Email)?.Value ??
            claims.FirstOrDefault(x => x.Type == ClaimTypes.Email)?.Value;
+        email = ValidateEmail(email);
         if (email != null)
         {
             filtered.Add(new Claim(JwtClaimTypes.Email, email));
@@ -228,6 +231,39 @@ public class ExternalController : Controller
         if (!identityResult.Succeeded) throw new Exception(identityResult.Errors.First().Description);
 
         return user;
+    }
+
+    private const int MaxNameLength = 200;
+    private const int MaxEmailLength = 256;
+
+    // Removes control characters, trims and caps the length of a display name from an external provider.
+    // Returns null when nothing usable remains.
+    internal static string SanitizeName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+
+        var cleaned = new string(value.Where(c => !char.IsControl(c)).ToArray()).Trim();
+        if (cleaned.Length > MaxNameLength)
+        {
+            cleaned = cleaned.Substring(0, MaxNameLength).Trim();
+        }
+
+        return cleaned.Length == 0 ? null : cleaned;
+    }
+
+    // Returns the email only if it is a plain, well-formed address within the length limit; otherwise null.
+    internal static string ValidateEmail(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+
+        value = value.Trim();
+        if (value.Length > MaxEmailLength || value.Any(char.IsControl)) return null;
+
+        return System.Net.Mail.MailAddress.TryCreate(value, out var address)
+            && address.Address == value
+            && string.IsNullOrEmpty(address.DisplayName)
+            ? value
+            : null;
     }
 
     // if the external login is OIDC-based, there are certain things we need to preserve to make logout work
