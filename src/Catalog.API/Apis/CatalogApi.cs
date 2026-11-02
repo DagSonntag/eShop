@@ -120,6 +120,13 @@ public static class CatalogApi
             .RequireAuthorization()
             .RequireRateLimiting("CatalogImport");
 
+        // Adjust the price and stock levels of a single item.
+        v2.MapPatch("/items/{id:int}/pricing", UpdateItemPricing)
+            .WithName("UpdateItemPricing")
+            .WithSummary("Adjust the price and stock of a catalog item")
+            .WithDescription("Updates the price and stock thresholds of a catalog item and publishes a price-changed integration event when the price changes")
+            .WithTags("Items");
+
         return app;
     }
 
@@ -533,6 +540,44 @@ public static class CatalogApi
             Updated = updated,
             PicturesDownloaded = picturesDownloaded
         });
+    }
+
+    public static async Task<Results<Ok<CatalogItem>, BadRequest<ProblemDetails>, NotFound<ProblemDetails>>> UpdateItemPricing(
+        [AsParameters] CatalogServices services,
+        [Description("The id of the catalog item to reprice")] int id,
+        UpdateItemPricingRequest request)
+    {
+        if (request.Price < 0)
+        {
+            return TypedResults.BadRequest<ProblemDetails>(new() { Detail = "Price cannot be negative." });
+        }
+
+        var catalogItem = await services.Context.CatalogItems.SingleOrDefaultAsync(i => i.Id == id);
+        if (catalogItem is null)
+        {
+            return TypedResults.NotFound<ProblemDetails>(new() { Detail = $"Item with id {id} not found." });
+        }
+
+        services.Logger.LogInformation("Repricing catalog item {Id} to {Price}: {Reason}", id, request.Price, request.Reason);
+
+        var oldPrice = catalogItem.Price;
+        catalogItem.Price = request.Price;
+        catalogItem.AvailableStock = request.AvailableStock;
+        catalogItem.RestockThreshold = request.RestockThreshold;
+        catalogItem.MaxStockThreshold = request.MaxStockThreshold;
+
+        if (oldPrice != request.Price)
+        {
+            var priceChangedEvent = new ProductPriceChangedIntegrationEvent(catalogItem.Id, request.Price, oldPrice);
+            await services.EventService.SaveEventAndCatalogContextChangesAsync(priceChangedEvent);
+            await services.EventService.PublishThroughEventBusAsync(priceChangedEvent);
+        }
+        else
+        {
+            await services.Context.SaveChangesAsync();
+        }
+
+        return TypedResults.Ok(catalogItem);
     }
 
     public static async Task<Results<NoContent, NotFound>> DeleteItemById(
