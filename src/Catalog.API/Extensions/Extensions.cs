@@ -33,7 +33,11 @@ public static class Extensions
                .AddSubscription<OrderStatusChangedToPaidIntegrationEvent, OrderStatusChangedToPaidIntegrationEventHandler>();
 
         builder.Services.AddOptions<CatalogOptions>()
-            .BindConfiguration(nameof(CatalogOptions));
+            .BindConfiguration(nameof(CatalogOptions))
+            .Validate(
+                o => o.PublicApiToken is null || PublicCatalogApi.IsStrongToken(o.PublicApiToken),
+                "CatalogOptions:PublicApiToken, when set, must be a cryptographically random value of at least 32 characters.")
+            .ValidateOnStart();
 
         if (builder.Configuration["OllamaEnabled"] is string ollamaEnabled && bool.Parse(ollamaEnabled))
         {
