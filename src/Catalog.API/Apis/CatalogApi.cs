@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
+using eShop.Catalog.API.Services;
 using Pgvector.EntityFrameworkCore;
 
 namespace eShop.Catalog.API;
@@ -416,11 +417,16 @@ public static class CatalogApi
         // (OS trust store, hostname, expiry, and revocation checks). To onboard a
         // feed served over self-signed TLS, add its CA to the host trust store
         // instead of disabling validation for all targets.
-        using var handler = new HttpClientHandler
+        // SSRF protection: http/https only, no redirects, and connections only to public IPs
+        // (checked at connect time, so DNS rebinding cannot swap in an internal address).
+        if (!SafeOutboundHttp.IsAllowedUrl(request.SourceUrl))
         {
-            AllowAutoRedirect = true
-        };
-        using var http = new HttpClient(handler);
+            return TypedResults.BadRequest<ProblemDetails>(new()
+            {
+                Detail = "SourceUrl must be an absolute http or https URL."
+            });
+        }
+        using var http = SafeOutboundHttp.CreateClient();
 
         // Strip any userinfo (user:pass@host) before logging so partner-feed
         // credentials embedded in SourceUrl are never written to the log sink.
@@ -429,7 +435,18 @@ public static class CatalogApi
             : "<invalid url>";
         services.Logger.LogInformation("Importing catalog feed from {SourceUrl}", safeSourceUrl);
 
-        var feedJson = await http.GetStringAsync(request.SourceUrl);
+        string feedJson;
+        try
+        {
+            feedJson = await http.GetStringAsync(request.SourceUrl);
+        }
+        catch (HttpRequestException)
+        {
+            return TypedResults.BadRequest<ProblemDetails>(new()
+            {
+                Detail = "SourceUrl could not be fetched."
+            });
+        }
         var items = JsonSerializer.Deserialize<List<CatalogImportItem>>(feedJson, new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true
@@ -517,7 +534,26 @@ public static class CatalogApi
             {
                 // File name already validated at the top of the loop.
                 var destination = Path.GetFullPath(Path.Combine(fullPicsDir, imported.PictureFileName!));
-                var bytes = await http.GetByteArrayAsync(imported.PictureUrl);
+                if (!SafeOutboundHttp.IsAllowedUrl(imported.PictureUrl))
+                {
+                    return TypedResults.BadRequest<ProblemDetails>(new()
+                    {
+                        Detail = "PictureUrl must be an absolute http or https URL."
+                    });
+                }
+
+                byte[] bytes;
+                try
+                {
+                    bytes = await http.GetByteArrayAsync(imported.PictureUrl);
+                }
+                catch (HttpRequestException)
+                {
+                    return TypedResults.BadRequest<ProblemDetails>(new()
+                    {
+                        Detail = "PictureUrl could not be fetched."
+                    });
+                }
                 await File.WriteAllBytesAsync(destination, bytes);
                 picturesDownloaded++;
             }
